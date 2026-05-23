@@ -1,92 +1,79 @@
-# Генератор згенерованого тексту з TXT
+# FileCutter
 
-Python Qt застосунок з українським інтерфейсом, який бере один або кілька `.txt` файлів і ріже їхній наявний текст на багато вихідних файлів `generated_text_XXXXXX.txt`. Розмір кожного вихідного файлу вибирається через нормальний розподіл на базі `scipy.stats.norm`.
+Windows GUI utility for splitting one or more `.txt` files into many generated
+`generated_text_XXXXXX.txt` files. The source files are not modified.
 
-Джерельні файли не змінюються. Усі результати записуються тільки у вибрану кінцеву папку.
+## Requirements
 
-## Вимоги
+- Windows 10/11
+- Python 3.6 or newer
+- Git
 
-- Python 3.6 або новіший
-- Графічне середовище з Qt-залежностями
-- SciPy для normal distribution
+## Clone And Run On Windows
 
-На Python 3.6-3.8 встановлюється `PySide2`, бо сучасний `PySide6` не підтримує такі старі версії Python. На Python 3.9+ використовується `PySide6`.
+```powershell
+git clone https://github.com/VolodymyrNakonechnyi/File-Cutter.git
+cd File-Cutter
 
-## Встановлення на Ubuntu
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 
-```bash
-cd /home/adminv/FileConfigurator
-python3 -m venv .venv
-source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
-```
+python -m pip install -e .
 
-Якщо Qt не запускається через `xcb`, встановіть системні залежності:
-
-```bash
-sudo apt install -y libxcb-cursor0 libxkbcommon-x11-0 libxcb-xinerama0 libegl1
-```
-
-## Запуск
-
-```bash
-cd /home/adminv/FileConfigurator
-source .venv/bin/activate
 python -m file_configurator
 ```
 
-Або без активації:
+## Build Windows EXE
 
-```bash
-cd /home/adminv/FileConfigurator
-.venv/bin/python -m file_configurator
+From the project folder:
+
+```powershell
+python -m pip install pyinstaller
+Remove-Item -Recurse -Force build, dist, FileCutter.spec -ErrorAction SilentlyContinue
+pyinstaller --clean --noconfirm --onefile --windowed --name FileCutter --paths src launcher.py
 ```
 
-## Як користуватися
+The finished Windows executable will be here:
 
-1. Виберіть один або кілька TXT файлів кнопкою `Вибрати TXT файли...` або виберіть папку кнопкою `Вибрати папку...`.
-2. Виберіть кінцеву папку, куди будуть записані результати.
-3. Налаштуйте розподіл розмірів у KB: середнє значення і середньо-квадратичне відхилення.
-4. Перевірте попередній розрахунок із загальним обсягом джерел і приблизною кількістю вихідних файлів.
-5. Кнопка запуску: `Згенерувати текстові файли`.
+```powershell
+.\dist\FileCutter.exe
+```
 
-## Розподіл розмірів
+Run it:
 
-- Кожен chunk отримує окремий sampled target size через `scipy.stats.norm`.
-- Розподіл задається тільки середнім значенням і середньо-квадратичним відхиленням у KB.
-- Якщо sampled значення виходить `<= 0 KB`, воно відкидається і семплиться нове.
-- Значення переводяться в байти за правилом `1 KB = 1024 bytes`.
-- Типові значення: `Середнє KB = 2.5`, `Середньо-квадратичне відхилення KB = 1.0`.
-- Фактичний вихідний файл може бути трохи меншим за sampled target, якщо межа припадає на багатобайтовий UTF-8 символ.
-- Мінімальний фактичний emitted chunk має 1 байт, щоб не створювати порожні файли.
+```powershell
+.\dist\FileCutter.exe
+```
 
-## Правила генерації
+The build uses `--windowed`, so the final app opens as a normal Windows GUI app
+without a console window.
 
-- Обробляються тільки `.txt` файли.
-- При виборі папки беруться лише `.txt` файли верхнього рівня; підпапки не обходяться.
-- Текст читається потоково частинами, без завантаження всього великого файлу в памʼять.
-- Вихідні файли мають назви `generated_text_000001.txt`, `generated_text_000002.txt`, `generated_text_000003.txt` і так далі.
-- Генерація триває, доки весь текст джерел не буде послідовно спожито.
-- Вихідні файли лишаються валідними UTF-8.
-- Якщо у кінцевій папці вже є `generated_text_*.txt`, застосунок попередить перед генерацією, бо такі файли можуть бути перезаписані.
-- Після завершення показується компактний підсумок: кількість файлів, вихідний обсяг, кінцева папка, статистика розмірів і текстова гістограма.
-- Для щойно згенерованих файлів створюється SVG-діаграма `generated_text_sizes_histogram.svg` у кінцевій папці.
-- Діаграма і зводка рахуються саме з файлів, створених поточною генерацією.
+## Debug EXE Build
 
-## Перевірка
+If the EXE does not open, build a console version to see the real error:
 
-```bash
+```powershell
+pyinstaller --clean --noconfirm --onefile --console --name FileCutter-debug --paths src launcher.py
+.\dist\FileCutter-debug.exe
+```
+
+## Usage
+
+1. Select one or more TXT files, or select a folder with TXT files.
+2. Select the output folder.
+3. Set the average output file size in KB and the standard deviation in KB.
+4. Run generation.
+5. The app writes `generated_text_000001.txt`, `generated_text_000002.txt`, and so on.
+
+## Tests
+
+```powershell
 python -m pytest
-python -c "from file_configurator.app import main; print(callable(main))"
 ```
 
-## Мокові файли для тестування
+## Notes
 
-Щоб створити багато тестових TXT файлів, виконайте:
-
-```bash
-python scripts/create_mock_txt_files.py
-```
-
-Команда створює папку `mock_txt_files/` з наборами `.txt` файлів різного розміру, які можна використати як джерела для генерації `generated_text_XXXXXX.txt`.
+- Do not build the EXE from `src/file_configurator/app.py` directly.
+- Build from `launcher.py`, because the application uses package imports.
+- Existing `generated_text_*.txt` files in the output folder may be overwritten.
