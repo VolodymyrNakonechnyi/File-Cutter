@@ -1,253 +1,344 @@
-"""Main window for batch .txt file operations."""
-
-from __future__ import annotations
+"""Main window for splitting TXT sources into generated text files."""
 
 from pathlib import Path
+from typing import List, Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QApplication,
-    QFileDialog,
-    QCheckBox,
-    QComboBox,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QProgressBar,
-    QPushButton,
-    QSpinBox,
-    QVBoxLayout,
-    QWidget,
+try:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import (
+        QApplication,
+        QFileDialog,
+        QDoubleSpinBox,
+        QGroupBox,
+        QHBoxLayout,
+        QLabel,
+        QMainWindow,
+        QMessageBox,
+        QProgressBar,
+        QPushButton,
+        QVBoxLayout,
+        QWidget,
+    )
+except ImportError:  # pragma: no cover - exercised only on Python 3.6/PySide2 installs.
+    from PySide2.QtCore import Qt
+    from PySide2.QtWidgets import (
+        QApplication,
+        QFileDialog,
+        QDoubleSpinBox,
+        QGroupBox,
+        QHBoxLayout,
+        QLabel,
+        QMainWindow,
+        QMessageBox,
+        QProgressBar,
+        QPushButton,
+        QVBoxLayout,
+        QWidget,
+    )
+
+from .generated_text_splitter import (
+    DistributionSettings,
+    GenerationResult,
+    build_size_distribution_report,
+    collect_txt_sources,
+    estimate_output_count,
+    total_input_size,
+    write_generated_text_chunks,
 )
-
-from .batch_reduce import BatchReductionResult, reduce_text_files, target_size_to_bytes
 from .text_file import TextFileError
 
 
 TXT_FILE_FILTER = "TXT файли (*.txt)"
 
+try:
+    ALIGN_LEFT = Qt.AlignmentFlag.AlignLeft
+    ALIGN_TOP = Qt.AlignmentFlag.AlignTop
+except AttributeError:  # PySide2
+    ALIGN_LEFT = Qt.AlignLeft
+    ALIGN_TOP = Qt.AlignTop
+
+try:
+    MESSAGE_YES = QMessageBox.StandardButton.Yes
+    MESSAGE_NO = QMessageBox.StandardButton.No
+except AttributeError:  # PySide2
+    MESSAGE_YES = QMessageBox.Yes
+    MESSAGE_NO = QMessageBox.No
+
 
 class MainWindow(QMainWindow):
-    """File-focused utility for reducing supported text files."""
+    """Ukrainian UI for slicing TXT input into generated text output files."""
 
     def __init__(self) -> None:
         super().__init__()
-        self._selected_target: Path | None = None
+        self._sources = []  # type: List[Path]
+        self._destination = None  # type: Optional[Path]
 
         central_widget = QWidget()
         central_layout = QVBoxLayout(central_widget)
         central_layout.addWidget(self._create_intro_label())
-        central_layout.addWidget(self._create_batch_group())
+        central_layout.addWidget(self._create_source_group())
+        central_layout.addWidget(self._create_destination_group())
+        central_layout.addWidget(self._create_distribution_group())
+        central_layout.addWidget(self._create_generation_group())
         central_layout.addStretch(1)
         self.setCentralWidget(central_widget)
 
-        self.resize(720, 320)
-        self.setWindowTitle("Скорочувач TXT файлів")
+        self.resize(860, 520)
+        self.setWindowTitle("Генератор згенерованого тексту з TXT")
         self.statusBar().showMessage("Готово")
+        self._update_preview()
 
-    def select_batch_file(self) -> None:
-        file_text, _ = QFileDialog.getOpenFileName(
+    def select_source_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Виберіть TXT файл",
-            self._dialog_start_path(),
+            "Виберіть TXT файли",
+            str(Path.home()),
             TXT_FILE_FILTER,
         )
-        if not file_text:
+        if not paths:
             return
+        self._set_sources(collect_txt_sources(paths))
 
-        self._set_selected_target(Path(file_text), "Вибраний файл")
-
-    def select_batch_folder(self) -> None:
-        folder_text = QFileDialog.getExistingDirectory(
-            self,
-            "Виберіть папку з TXT файлами",
-            self._dialog_start_path(),
-        )
-        if not folder_text:
+    def select_source_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Виберіть папку з TXT файлами", str(Path.home()))
+        if not folder:
             return
-
-        self._set_selected_target(Path(folder_text), "Вибрана папка")
-
-    def reduce_selected_target(self) -> None:
-        if self._selected_target is None:
-            self._show_error("Спочатку виберіть файл або папку.")
-            return
-
-        target_size = self.target_size_input.value()
-        unit = self.unit_input.currentText()
         try:
-            target_bytes = target_size_to_bytes(target_size, unit)
+            self._set_sources(collect_txt_sources(folder=folder))
+        except TextFileError as exc:
+            self._show_error(str(exc))
+
+    def select_destination_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Виберіть кінцеву папку", str(Path.home()))
+        if not folder:
+            return
+        self._destination = Path(folder)
+        self.destination_label.setText(str(self._destination))
+        self.statusBar().showMessage(f"Кінцева папка: {self._destination}")
+        self._update_preview()
+
+    def generate_text(self) -> None:
+        if not self._sources:
+            self._show_error("Спочатку виберіть TXT файли або папку з TXT файлами.")
+            return
+        if self._destination is None:
+            self._show_error("Спочатку виберіть кінцеву папку.")
+            return
+
+        try:
+            settings = self._distribution_settings()
+            settings.validate()
         except TextFileError as exc:
             self._show_error(str(exc))
             return
 
-        if not self._confirm_batch_reduction(target_size, unit, target_bytes):
+        if not self._confirm_generation():
             return
 
         self._prepare_progress()
-        self.reduce_folder_button.setEnabled(False)
+        self.generate_button.setEnabled(False)
         try:
-            result = reduce_text_files(
-                self._selected_target,
-                target_size,
-                unit,
-                self.fill_smaller_input.isChecked(),
-                self._update_progress,
-            )
+            result = write_generated_text_chunks(self._sources, self._destination, settings, self._update_progress)
         except TextFileError as exc:
             self._show_error(str(exc))
             return
         finally:
-            self.reduce_folder_button.setEnabled(True)
+            self.generate_button.setEnabled(True)
 
-        self._show_batch_results(result)
+        distribution_text = self._build_distribution_text(result)
+        self._show_generation_results(result, distribution_text)
 
     def _create_intro_label(self) -> QLabel:
         intro = QLabel(
-            "Виберіть TXT файл або папку, задайте потрібний числовий розмір і "
-            "скоротіть файли, які більші за цей розмір. Менші файли не змінюються, "
-            "якщо окремо не ввімкнути дозаповнення."
+            "Завантажте TXT файли або папку, налаштуйте нормальний розподіл розмірів "
+            "і у кінцеву папку буде згенеровано багато generated_text_XXXXXX.txt файлів. "
+            "Джерельні файли не змінюються."
         )
         intro.setWordWrap(True)
-        intro.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        intro.setAlignment(ALIGN_LEFT | ALIGN_TOP)
         return intro
 
-    def _create_batch_group(self) -> QGroupBox:
-        batch_group = QGroupBox("Скорочення файлів")
-        batch_layout = QVBoxLayout(batch_group)
-
-        target_picker_layout = QHBoxLayout()
-        self.batch_target_label = QLabel("Файл або папку не вибрано")
-        self.batch_target_label.setWordWrap(True)
-        self.select_file_button = QPushButton("Вибрати файл...")
-        self.select_file_button.clicked.connect(self.select_batch_file)
+    def _create_source_group(self) -> QGroupBox:
+        group = QGroupBox("Джерело")
+        layout = QVBoxLayout(group)
+        button_layout = QHBoxLayout()
+        self.source_label = QLabel("TXT джерела не вибрані")
+        self.source_label.setWordWrap(True)
+        self.select_files_button = QPushButton("Вибрати TXT файли...")
+        self.select_files_button.clicked.connect(self.select_source_files)
         self.select_folder_button = QPushButton("Вибрати папку...")
-        self.select_folder_button.clicked.connect(self.select_batch_folder)
-        target_picker_layout.addWidget(QLabel("Ціль:"))
-        target_picker_layout.addWidget(self.batch_target_label, 1)
-        target_picker_layout.addWidget(self.select_file_button)
-        target_picker_layout.addWidget(self.select_folder_button)
+        self.select_folder_button.clicked.connect(self.select_source_folder)
+        button_layout.addWidget(self.select_files_button)
+        button_layout.addWidget(self.select_folder_button)
+        button_layout.addStretch(1)
+        layout.addLayout(button_layout)
+        layout.addWidget(self.source_label)
+        return group
 
-        target_layout = QHBoxLayout()
-        self.target_size_input = QSpinBox()
-        self.target_size_input.setRange(1, 1_000_000)
-        self.target_size_input.setValue(20)
-        self.unit_input = QComboBox()
-        self.unit_input.addItems(["B", "KB", "MB"])
-        self.unit_input.setCurrentText("KB")
-        self.unit_input.setEditable(False)
-        self.reduce_folder_button = QPushButton("ЗАПУСТИТИ ОБРОБКУ")
-        self.reduce_folder_button.setMinimumHeight(48)
-        self.reduce_folder_button.setDefault(True)
-        self.reduce_folder_button.setStyleSheet(
+    def _create_destination_group(self) -> QGroupBox:
+        group = QGroupBox("Кінцева папка")
+        layout = QHBoxLayout(group)
+        self.destination_label = QLabel("Кінцеву папку не вибрано")
+        self.destination_label.setWordWrap(True)
+        self.select_destination_button = QPushButton("Вибрати кінцеву папку...")
+        self.select_destination_button.clicked.connect(self.select_destination_folder)
+        layout.addWidget(self.destination_label, 1)
+        layout.addWidget(self.select_destination_button)
+        return group
+
+    def _create_distribution_group(self) -> QGroupBox:
+        group = QGroupBox("Нормальний розподіл розмірів")
+        layout = QHBoxLayout(group)
+        self.mean_kb_input = self._size_spinbox(2.5, minimum=0.01)
+        self.std_kb_input = self._size_spinbox(1.0, minimum=0.01)
+        for label, widget in (
+            ("Середнє KB:", self.mean_kb_input),
+            ("Середньо-квадратичне відхилення KB:", self.std_kb_input),
+        ):
+            layout.addWidget(QLabel(label))
+            layout.addWidget(widget)
+        layout.addStretch(1)
+        return group
+
+    def _create_generation_group(self) -> QGroupBox:
+        group = QGroupBox("Генерація")
+        layout = QVBoxLayout(group)
+        self.preview_label = QLabel("Попередній розрахунок недоступний")
+        self.preview_label.setWordWrap(True)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 1000)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("Прогрес: 0%")
+        self.generate_button = QPushButton("Згенерувати текстові файли")
+        self.generate_button.setMinimumHeight(52)
+        self.generate_button.setDefault(True)
+        self.generate_button.setStyleSheet(
             """
             QPushButton {
-                background-color: #15803d;
+                background-color: #7c3aed;
                 color: white;
                 border: 0;
                 border-radius: 8px;
-                font-size: 16px;
+                font-size: 17px;
                 font-weight: 700;
-                padding: 10px 18px;
+                padding: 12px 20px;
             }
-            QPushButton:hover {
-                background-color: #166534;
-            }
-            QPushButton:pressed {
-                background-color: #14532d;
-            }
-            QPushButton:disabled {
-                background-color: #94a3b8;
-                color: #e2e8f0;
-            }
+            QPushButton:hover { background-color: #6d28d9; }
+            QPushButton:pressed { background-color: #5b21b6; }
+            QPushButton:disabled { background-color: #94a3b8; color: #e2e8f0; }
             """
         )
-        self.reduce_folder_button.clicked.connect(self.reduce_selected_target)
-        target_layout.addWidget(QLabel("Цільовий розмір:"))
-        target_layout.addWidget(self.target_size_input)
-        target_layout.addWidget(self.unit_input)
-        target_layout.addStretch(1)
-        target_layout.addWidget(self.reduce_folder_button)
+        self.generate_button.clicked.connect(self.generate_text)
+        layout.addWidget(self.preview_label)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.generate_button)
+        return group
 
-        self.fill_smaller_input = QCheckBox("Дозаповнити менші файли випадковим текстом до цільового розміру")
+    def _size_spinbox(self, value: float, minimum: float = 0.0) -> QDoubleSpinBox:
+        widget = QDoubleSpinBox()
+        widget.setRange(minimum, 1_000_000.0)
+        widget.setDecimals(2)
+        widget.setSingleStep(0.1)
+        widget.setValue(value)
+        widget.valueChanged.connect(self._update_preview)
+        return widget
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("Прогрес: 0%")
-        self.progress_bar.setTextVisible(True)
-
-        batch_layout.addLayout(target_picker_layout)
-        batch_layout.addLayout(target_layout)
-        batch_layout.addWidget(self.fill_smaller_input)
-        batch_layout.addWidget(self.progress_bar)
-        return batch_group
-
-    def _confirm_batch_reduction(self, target_size: int, unit: str, target_bytes: int) -> bool:
-        target_label = "файл" if self._selected_target and self._selected_target.is_file() else "папку"
-        smaller_behavior = (
-            "Файли, які менші за цей розмір, будуть дозаповнені випадковим текстом."
-            if self.fill_smaller_input.isChecked()
-            else "Файли, які вже менші або рівні цьому розміру, не змінюються."
+    def _distribution_settings(self) -> DistributionSettings:
+        return DistributionSettings(
+            mean_kb=self.mean_kb_input.value(),
+            std_kb=self.std_kb_input.value(),
         )
-        result = QMessageBox.question(
-            self,
-            "Підтвердьте скорочення",
-            (
-                f"Програма обробить вибрану {target_label} і перезапише TXT файли, "
-                f"якщо вони більші за {target_size} {unit} ({target_bytes} байт).\n\n"
-                f"{smaller_behavior}\n\n"
-                "Цю дію не можна скасувати. Продовжити?"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return result == QMessageBox.StandardButton.Yes
 
-    def _dialog_start_path(self) -> str:
-        if self._selected_target is None:
-            return str(Path.home())
-        if self._selected_target.is_file():
-            return str(self._selected_target.parent)
-        return str(self._selected_target)
+    def _set_sources(self, sources: List[Path]) -> None:
+        self._sources = sources
+        if not sources:
+            self.source_label.setText("У виборі немає TXT файлів")
+        else:
+            self.source_label.setText(f"Вибрано TXT файлів: {len(sources)}")
+        self._update_preview()
 
-    def _set_selected_target(self, path: Path, label: str) -> None:
-        self._selected_target = path
-        self.batch_target_label.setText(str(path))
-        self.statusBar().showMessage(f"{label}: {path}")
-
-    def _prepare_progress(self) -> None:
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("Підготовка...")
-        self.statusBar().showMessage("Підготовка до обробки файлів...")
-        QApplication.processEvents()
-
-    def _update_progress(self, current: int, total: int, path: Path) -> None:
-        if total <= 0:
-            self.progress_bar.setRange(0, 1)
-            self.progress_bar.setValue(1)
-            self.progress_bar.setFormat("Файлів для обробки немає")
+    def _update_preview(self) -> None:
+        if not hasattr(self, "preview_label"):
+            return
+        if not self._sources:
+            self.preview_label.setText("Виберіть TXT джерела для попереднього розрахунку.")
+            return
+        try:
+            settings = self._distribution_settings()
+            settings.validate()
+            total_bytes = total_input_size(self._sources)
+            estimate = estimate_output_count(total_bytes, settings)
+        except (OSError, TextFileError) as exc:
+            self.preview_label.setText(f"Попередній розрахунок недоступний: {exc}")
             return
 
-        self.progress_bar.setRange(0, total)
-        self.progress_bar.setValue(current)
-        self.progress_bar.setFormat(f"Оброблено {current}/{total}: {path.name}")
-        self.statusBar().showMessage(f"Оброблено {current}/{total}: {path.name}")
+        self.preview_label.setText(
+            f"Вхідний обсяг: {total_bytes:,} байт. "
+            f"Очікувано файлів: приблизно {estimate:,}. "
+            f"Destination: {self._destination or 'не вибрано'}"
+        )
+
+    def _confirm_generation(self) -> bool:
+        existing = list(self._destination.glob("generated_text_*.txt")) if self._destination else []
+        warning = ""
+        if existing:
+            warning = (
+                f"\n\nУ кінцевій папці вже є {len(existing)} generated_text_*.txt файлів. "
+                "Вони можуть бути перезаписані."
+            )
+        result = QMessageBox.question(
+            self,
+            "Підтвердьте генерацію",
+            f"Буде згенеровано generated_text_XXXXXX.txt файли у вибрану кінцеву папку. Продовжити?{warning}",
+            MESSAGE_YES | MESSAGE_NO,
+            MESSAGE_NO,
+        )
+        return result == MESSAGE_YES
+
+    def _prepare_progress(self) -> None:
+        self.progress_bar.setRange(0, 1000)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("Підготовка...")
+        self.statusBar().showMessage("Підготовка до генерації...")
+        QApplication.processEvents()
+
+    def _update_progress(self, file_count: int, output_bytes: int, total_bytes: int, output_path: Path) -> None:
+        value = 1000 if total_bytes <= 0 else min(1000, round((output_bytes / total_bytes) * 1000))
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat(f"Створено {file_count} файлів: {output_path.name}")
+        self.statusBar().showMessage(f"Створено {file_count} файлів")
         QApplication.processEvents()
 
     def _show_error(self, message: str) -> None:
-        QMessageBox.warning(self, "Скорочувач TXT файлів", message)
+        QMessageBox.warning(self, "Генератор згенерованого тексту з TXT", message)
         self.statusBar().showMessage(message)
 
-    def _show_batch_results(self, result: BatchReductionResult) -> None:
-        QMessageBox.information(self, "Обробку завершено", f"Готово.\n\n{result.summary()}")
-        self.statusBar().showMessage(
-            "Завершено: "
-            f"скорочено {len(result.reduced)}, "
-            f"дозаповнено {len(result.expanded)}, "
-            f"пропущено {len(result.skipped)}, "
-            f"помилок {len(result.failed)}"
+    def _build_distribution_text(self, result: GenerationResult) -> str:
+        if not result.generated_paths:
+            return "\n\nДіаграму не створено: немає файлів згенерованого тексту."
+        self.progress_bar.setFormat("Будую діаграму...")
+        self.statusBar().showMessage("Будую діаграму розподілу розмірів...")
+        QApplication.processEvents()
+        try:
+            report = build_size_distribution_report(
+                result.generated_paths,
+                result.destination / "generated_text_sizes_histogram.svg",
+            )
+        except (OSError, TextFileError) as exc:
+            return f"\n\nДіаграму не створено: {exc}"
+        return f"\n\n{report.to_text()}"
+
+    def _show_generation_results(self, result: GenerationResult, distribution_text: str) -> None:
+        self.progress_bar.setValue(1000)
+        self.progress_bar.setFormat("Готово")
+        QMessageBox.information(
+            self,
+            "Генерацію завершено",
+            (
+                f"Створено файлів: {result.generated_files}\n"
+                f"Вихідний обсяг: {result.output_bytes:,} байт\n"
+                f"Кінцева папка: {result.destination}"
+                f"{distribution_text}"
+            ),
         )
+        self.statusBar().showMessage(f"Готово: створено {result.generated_files} файлів")

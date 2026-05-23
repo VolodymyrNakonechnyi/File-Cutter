@@ -1,10 +1,8 @@
 """Batch reduction services for supported text files."""
 
-from __future__ import annotations
-
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable, List, Optional, Tuple, Union
 
 from .text_file import TextFileError
 from .tiny_text_model import generate_language_like_padding
@@ -26,18 +24,18 @@ class BatchFileResult:
 
     path: Path
     reason: str
-    original_size: int | None = None
-    final_size: int | None = None
+    original_size: Optional[int] = None
+    final_size: Optional[int] = None
 
 
 @dataclass
 class BatchReductionResult:
     """Aggregated outcome for a folder reduction run."""
 
-    reduced: list[BatchFileResult] = field(default_factory=list)
-    expanded: list[BatchFileResult] = field(default_factory=list)
-    skipped: list[BatchFileResult] = field(default_factory=list)
-    failed: list[BatchFileResult] = field(default_factory=list)
+    reduced: List[BatchFileResult] = field(default_factory=list)
+    expanded: List[BatchFileResult] = field(default_factory=list)
+    skipped: List[BatchFileResult] = field(default_factory=list)
+    failed: List[BatchFileResult] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -51,8 +49,8 @@ class BatchReductionResult:
             f"Помилки: {len(self.failed)}"
         )
 
-    def detailed_lines(self) -> list[str]:
-        lines: list[str] = []
+    def detailed_lines(self) -> List[str]:
+        lines = []  # type: List[str]
         for label, items in (
             ("Скорочено", self.reduced),
             ("Дозаповнено", self.expanded),
@@ -72,7 +70,7 @@ class BatchReductionResult:
         return f"{self.summary()}\n\n{details}"
 
 
-def target_size_to_bytes(value: int | str, unit: str) -> int:
+def target_size_to_bytes(value: Union[int, str], unit: str) -> int:
     """Validate a positive integer size value and return bytes."""
 
     if unit not in SIZE_UNIT_FACTORS:
@@ -97,13 +95,13 @@ def target_size_to_bytes(value: int | str, unit: str) -> int:
     return target_size * SIZE_UNIT_FACTORS[unit]
 
 
-def target_size_kb_to_bytes(value: int | str) -> int:
+def target_size_kb_to_bytes(value: Union[int, str]) -> int:
     """Validate a positive integer KB value and return bytes."""
 
     return target_size_to_bytes(value, "KB")
 
 
-def scan_batch_folder(folder: str | Path) -> tuple[list[Path], list[BatchFileResult]]:
+def scan_batch_folder(folder: Union[str, Path]) -> Tuple[List[Path], List[BatchFileResult]]:
     """Return top-level .txt files and skipped unsupported entries."""
 
     folder_path = Path(folder)
@@ -112,8 +110,8 @@ def scan_batch_folder(folder: str | Path) -> tuple[list[Path], list[BatchFileRes
     if not folder_path.is_dir():
         raise TextFileError(f"Вибраний шлях не є папкою: {folder_path}")
 
-    txt_files: list[Path] = []
-    skipped: list[BatchFileResult] = []
+    txt_files = []  # type: List[Path]
+    skipped = []  # type: List[BatchFileResult]
 
     try:
         entries = sorted(folder_path.iterdir(), key=lambda path: path.name.lower())
@@ -131,7 +129,7 @@ def scan_batch_folder(folder: str | Path) -> tuple[list[Path], list[BatchFileRes
     return txt_files, skipped
 
 
-def scan_batch_target(target: str | Path) -> tuple[list[Path], list[BatchFileResult]]:
+def scan_batch_target(target: Union[str, Path]) -> Tuple[List[Path], List[BatchFileResult]]:
     """Return supported .txt files for either one file or a top-level folder scan."""
 
     target_path = Path(target)
@@ -187,11 +185,11 @@ def expand_utf8_bytes(data: bytes, target_bytes: int) -> bytes:
 
 
 def reduce_text_files(
-    target: str | Path,
-    target_size: int | str,
+    target: Union[str, Path],
+    target_size: Union[int, str],
     unit: str = "KB",
     fill_smaller: bool = False,
-    progress_callback: ProgressCallback | None = None,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> BatchReductionResult:
     """Reduce one .txt file or top-level .txt files in a folder to the target size."""
 
@@ -250,7 +248,7 @@ def reduce_text_files(
     return result
 
 
-def reduce_folder_text_files(folder: str | Path, target_size_kb: int | str) -> BatchReductionResult:
+def reduce_folder_text_files(folder: Union[str, Path], target_size_kb: Union[int, str]) -> BatchReductionResult:
     """Reduce oversized top-level .txt files in a folder to the target KB size."""
 
     return reduce_text_files(folder, target_size_kb, "KB")

@@ -1,15 +1,14 @@
 """Helpers for reading and writing supported text files."""
 
-from __future__ import annotations
-
 from pathlib import Path
+from typing import Union
 
 
 class TextFileError(Exception):
     """Raised when a supported text-file operation cannot be completed."""
 
 
-def validate_txt_path(path: str | Path) -> Path:
+def validate_txt_path(path: Union[str, Path]) -> Path:
     """Return a normalized path when it points to a supported .txt file."""
 
     if not path:
@@ -22,7 +21,7 @@ def validate_txt_path(path: str | Path) -> Path:
     return txt_path
 
 
-def read_text_file(path: str | Path) -> str:
+def read_text_file(path: Union[str, Path]) -> str:
     """Read a UTF-8 .txt file."""
 
     txt_path = validate_txt_path(path)
@@ -36,7 +35,7 @@ def read_text_file(path: str | Path) -> str:
         raise TextFileError(f"Could not read {txt_path}: {exc}") from exc
 
 
-def write_text_file(path: str | Path, content: str) -> Path:
+def write_text_file(path: Union[str, Path], content: str) -> Path:
     """Write UTF-8 text to a supported .txt file and return its path."""
 
     txt_path = validate_txt_path(path)

@@ -1,9 +1,8 @@
 """Tiny built-in character model for language-like filler text."""
 
-from __future__ import annotations
-
 import math
 import random
+from typing import List
 
 
 TINY_LANGUAGE_CORPUS = (
@@ -26,9 +25,9 @@ class TinyCharacterModel:
     def __init__(self, corpus: str = TINY_LANGUAGE_CORPUS) -> None:
         self._vocabulary = sorted(set(corpus))
         self._index = {char: index for index, char in enumerate(self._vocabulary)}
-        self._bias_logits: list[float] = []
-        self._prev_logits: list[list[float]] = []
-        self._prev2_logits: list[list[float]] = []
+        self._bias_logits = []  # type: List[float]
+        self._prev_logits = []  # type: List[List[float]]
+        self._prev2_logits = []  # type: List[List[float]]
         self._train(corpus)
 
     def generate(self, minimum_bytes: int, seed: str = "Файл ") -> str:
@@ -60,11 +59,11 @@ class TinyCharacterModel:
         self._prev_logits = [self._counts_to_logits(row) for row in prev_counts]
         self._prev2_logits = [self._counts_to_logits(row) for row in prev2_counts]
 
-    def _counts_to_logits(self, counts: list[float]) -> list[float]:
+    def _counts_to_logits(self, counts: List[float]) -> List[float]:
         total = sum(counts)
         return [math.log(count / total) for count in counts]
 
-    def _sample_next(self, output: list[str]) -> str:
+    def _sample_next(self, output: List[str]) -> str:
         previous = output[-1] if output else " "
         previous2 = output[-2] if len(output) >= 2 else " "
         previous_index = self._index.get(previous, self._index[" "])
