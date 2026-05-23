@@ -17,4 +17,7 @@ def main() -> int:
     app.setApplicationName("Генератор згенерованого тексту з TXT")
     window = MainWindow()
     window.show()
-    return app.exec()
+    try:
+        return app.exec()
+    except AttributeError:  # PySide2
+        return app.exec_()
