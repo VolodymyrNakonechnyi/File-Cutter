@@ -9,3 +9,5 @@ dist/
 .ruff_cache/
 .idea/
 .vscode/
+Generated-texts/
+mock_txt_files/
